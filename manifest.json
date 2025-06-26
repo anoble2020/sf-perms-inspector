@@ -1,0 +1,93 @@
+{
+    "manifest_version": 3,
+    "name": "Salesforce Field Permissions Inspector 2",
+    "version": "1.0",
+    "description": "Displays field-level security permissions for Salesforce fields",
+    "permissions": [
+      "activeTab",
+      "storage",
+      "cookies"
+    ],
+    "host_permissions": [
+    "https://*.salesforce.com/*",
+    "https://*.salesforce-setup.com/*",
+    "https://*.force.com/*",
+    "https://*.cloudforce.com/*",
+    "https://*.visualforce.com/*",
+    "https://*.sfcrmapps.cn/*",
+    "https://*.sfcrmproducts.cn/*",
+    "https://*.salesforce.mil/*",
+    "https://*.force.mil/*",
+    "https://*.cloudforce.mil/*",
+    "https://*.visualforce.mil/*",
+    "https://*.crmforce.mil/*",
+    "https://*.force.com.mcas.ms/*",
+    "https://*.builder.salesforce-experience.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://*.salesforce.com/*",
+        "https://*.salesforce-setup.com/*",
+        "https://*.visual.force.com/*",
+        "https://*.vf.force.com/*",
+        "https://*.lightning.force.com/*",
+        "https://*.cloudforce.com/*",
+        "https://*.visualforce.com/*",
+        "https://*.sfcrmapps.cn/*",
+        "https://*.sfcrmproducts.cn/*",
+        "https://*.salesforce.mil/*",
+        "https://*.visual.force.mil/*",
+        "https://*.vf.force.mil/*",
+        "https://*.lightning.force.mil/*",
+        "https://*.cloudforce.mil/*",
+        "https://*.visualforce.mil/*",
+        "https://*.crmforce.mil/*",
+        "https://*.lightning.force.com.mcas.ms/*",
+        "https://*.force.com/*",
+        "https://*.builder.salesforce-experience.com/*"
+      ],
+      "all_frames": true,
+      "css": [
+        "styles.css"
+      ],
+      "js": [
+        "content.js"
+      ]
+    }
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+    "web_accessible_resources": [
+      {
+        "resources": ["icons/shield16.png", "icons/shield128.png"],
+        "matches": [
+            "https://*.salesforce.com/*",
+            "https://*.salesforce-setup.com/*",
+            "https://*.visual.force.com/*",
+            "https://*.vf.force.com/*",
+            "https://*.lightning.force.com/*",
+            "https://*.cloudforce.com/*",
+            "https://*.visualforce.com/*",
+            "https://*.sfcrmapps.cn/*",
+            "https://*.sfcrmproducts.cn/*",
+            "https://*.salesforce.mil/*",
+            "https://*.visual.force.mil/*",
+            "https://*.vf.force.mil/*",
+            "https://*.lightning.force.mil/*",
+            "https://*.cloudforce.mil/*",
+            "https://*.visualforce.mil/*",
+            "https://*.crmforce.mil/*",
+            "https://*.lightning.force.com.mcas.ms/*",
+            "https://*.force.com/*",
+            "https://*.builder.salesforce-experience.com/*"
+          ]
+      }
+    ],
+    "icons": {
+      "16": "icons/icon16.png",
+      "128": "icons/icon128.png"
+    }
+  }
