@@ -288,6 +288,37 @@ class SalesforceFieldInspector {
   
     async showPermissionsModal(fieldInfo) {
       try {
+        // Query all permission sets
+        const lightningDomain = window.location.hostname;
+        const myDomain = lightningDomain.replace('.lightning.force.com', '.my.salesforce.com');
+        const sessionId = await new Promise((resolve, reject) => {
+          chrome.runtime.sendMessage({ action: 'getSessionId', domain: myDomain }, (response) => {
+            if (response && response.sessionId) {
+              resolve(response.sessionId);
+            } else {
+              reject(response && response.error ? response.error : 'Failed to get sessionId');
+            }
+          });
+        });
+        const permSetQuery = `SELECT Id, Name FROM PermissionSet WHERE IsOwnedByProfile = false`;
+        const permSetUrl = `https://${myDomain}/services/data/v${this.apiVersion}/query/?q=${encodeURIComponent(permSetQuery)}`;
+        const permSetResp = await new Promise((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open('GET', permSetUrl, true);
+          xhr.setRequestHeader('Authorization', 'Bearer ' + sessionId);
+          xhr.onreadystatechange = function () {
+            if (xhr.readyState === 4) {
+              if (xhr.status >= 200 && xhr.status < 300) {
+                resolve(JSON.parse(xhr.responseText));
+              } else {
+                reject(new Error('Failed to query PermissionSets: ' + xhr.status + ' ' + xhr.responseText));
+              }
+            }
+          };
+          xhr.send();
+        });
+        const allPermSets = permSetResp.records || [];
+        // Query field permissions as before
         const permissions = await this.fetchFieldPermissions(fieldInfo);
         // Store the last raw records for use in POST logic
         if (this.lastFieldPermissionsRecords === undefined) {
@@ -299,8 +330,27 @@ class SalesforceFieldInspector {
           this.lastFieldPermissionsRecords = permissions.rawRecords;
         } else if (permissions && permissions.records) {
           this.lastFieldPermissionsRecords = permissions.records;
-        } else if (permissions && permissions.profiles && permissions.permissionSets) {
-          // fallback: try to get from a global if set in fetchFieldPermissions
+        }
+        // Merge all permission sets with field permissions
+        if (permissions && permissions.permissionSets) {
+          const permSetMap = {};
+          permissions.permissionSets.forEach(ps => {
+            if (ps && ps.parentId) permSetMap[ps.parentId] = ps;
+          });
+          // Add missing permission sets as unchecked
+          allPermSets.forEach(ps => {
+            if (!permSetMap[ps.Id]) {
+              permissions.permissionSets.push({
+                name: ps.Name,
+                read: false,
+                edit: false,
+                id: null,
+                parentId: ps.Id
+              });
+            }
+          });
+          // Sort after merge
+          permissions.permissionSets.sort((a, b) => a.name.localeCompare(b.name));
         }
         console.log('[FieldPerm POST] lastFieldPermissionsRecords set:', this.lastFieldPermissionsRecords);
         this.createModal(fieldInfo, permissions);
@@ -371,7 +421,8 @@ class SalesforceFieldInspector {
           read: record.PermissionsRead,
           edit: record.PermissionsEdit,
           profileName: undefined,
-          id: record.Id // Ensure the permission Id is set for PATCH
+          id: record.Id, // Ensure the permission Id is set for PATCH
+          parentId: record.Parent && (record.Parent.Id || (record.Parent.attributes && record.Parent.attributes.url && record.Parent.attributes.url.split('/').pop()))
         };
         if (!record.Id) {
           console.warn('FieldPermissions record missing Id:', record);
@@ -393,7 +444,6 @@ class SalesforceFieldInspector {
           }
         }
       });
-
       // After collecting permissions, sort them alphabetically by name
       permissions.profiles.sort((a, b) => a.name.localeCompare(b.name));
       permissions.permissionSets.sort((a, b) => a.name.localeCompare(b.name));
