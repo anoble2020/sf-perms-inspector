@@ -100,3 +100,71 @@
       max-height: 70vh;
     }
   }
+
+  /* Toast styles (sonner-like) */
+  .field-permissions-toast {
+    position: fixed;
+    bottom: 32px;
+    right: 32px;
+    min-width: 280px;
+    max-width: 350px;
+    background: #fff;
+    color: #222;
+    border-radius: 8px;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.18), 0 1.5px 4px rgba(0,0,0,0.08);
+    padding: 16px 20px;
+    z-index: 2147483647;
+    opacity: 0;
+    transform: translateY(40px) scale(0.98);
+    transition: opacity 0.3s cubic-bezier(.4,0,.2,1), transform 0.3s cubic-bezier(.4,0,.2,1);
+    display: flex;
+    align-items: center;
+    pointer-events: auto;
+  }
+  .field-permissions-toast-in {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  .field-permissions-toast-out {
+    opacity: 0;
+    transform: translateY(40px) scale(0.98);
+  }
+  .field-permissions-toast-success {
+    border-left: 4px solid #2ecc40;
+  }
+  .field-permissions-toast-error {
+    border-left: 4px solid #ffb75d;
+  }
+  .field-permissions-toast-content {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .field-permissions-toast-icon {
+    font-size: 1.5em;
+    margin-right: 8px;
+  }
+  .field-permissions-toast-message {
+    font-size: 1em;
+    font-weight: 500;
+    word-break: break-word;
+    white-space: pre-line;
+    max-width: 260px;
+    max-height: 120px;
+    overflow-y: auto;
+    display: block;
+    padding-right: 16px;
+  }
+
+  /* Modal fade-in and fade-out animation */
+  .field-permissions-modal-fadein {
+    opacity: 0;
+    transition: opacity 0.18s cubic-bezier(.4,0,.2,1);
+  }
+  .field-permissions-modal-fadein-active {
+    opacity: 1;
+  }
+  .field-permissions-modal-fadeout {
+    opacity: 0;
+    transition: opacity 0.18s cubic-bezier(.4,0,.2,1);
+  }

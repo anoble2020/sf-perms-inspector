@@ -289,6 +289,20 @@ class SalesforceFieldInspector {
     async showPermissionsModal(fieldInfo) {
       try {
         const permissions = await this.fetchFieldPermissions(fieldInfo);
+        // Store the last raw records for use in POST logic
+        if (this.lastFieldPermissionsRecords === undefined) {
+          this.lastFieldPermissionsRecords = [];
+        }
+        if (permissions && permissions._rawRecords) {
+          this.lastFieldPermissionsRecords = permissions._rawRecords;
+        } else if (permissions && permissions.rawRecords) {
+          this.lastFieldPermissionsRecords = permissions.rawRecords;
+        } else if (permissions && permissions.records) {
+          this.lastFieldPermissionsRecords = permissions.records;
+        } else if (permissions && permissions.profiles && permissions.permissionSets) {
+          // fallback: try to get from a global if set in fetchFieldPermissions
+        }
+        console.log('[FieldPerm POST] lastFieldPermissionsRecords set:', this.lastFieldPermissionsRecords);
         this.createModal(fieldInfo, permissions);
       } catch (error) {
         console.error('Error fetching permissions:', error);
@@ -341,6 +355,8 @@ class SalesforceFieldInspector {
     }
   
     processPermissions(records) {
+      // Save the raw records for POST logic
+      this.lastFieldPermissionsRecords = records;
       const permissions = {
         profiles: [],
         permissionSets: []
@@ -349,12 +365,17 @@ class SalesforceFieldInspector {
       const seenPermSets = new Set();
 
       records.forEach(record => {
+        console.log('FieldPermissions record:', record);
         let item = {
           name: '',
           read: record.PermissionsRead,
           edit: record.PermissionsEdit,
-          profileName: undefined
+          profileName: undefined,
+          id: record.Id // Ensure the permission Id is set for PATCH
         };
+        if (!record.Id) {
+          console.warn('FieldPermissions record missing Id:', record);
+        }
         if (record.Parent.Type === 'Profile') {
           const uniqueKey = record.Parent.Profile && record.Parent.Profile.Name ? record.Parent.Profile.Name : record.Parent.Name;
           if (!seenProfiles.has(uniqueKey)) {
@@ -373,6 +394,11 @@ class SalesforceFieldInspector {
         }
       });
 
+      // After collecting permissions, sort them alphabetically by name
+      permissions.profiles.sort((a, b) => a.name.localeCompare(b.name));
+      permissions.permissionSets.sort((a, b) => a.name.localeCompare(b.name));
+      // Attach raw records for POST logic
+      permissions._rawRecords = records;
       return permissions;
     }
   
@@ -383,10 +409,15 @@ class SalesforceFieldInspector {
         existingModal.remove();
       }
   
+      // Track modified permissions
+      this.modifiedPermissions = {};
+  
       const modal = document.createElement('div');
       modal.id = 'field-permissions-modal';
       modal.className = 'slds-modal slds-fade-in-open';
       modal.style.zIndex = '2147483647'; // Ensure modal is on top
+      // Add fade-in class
+      modal.classList.add('field-permissions-modal-fadein');
       modal.innerHTML = `
         <div class="slds-modal__container" style="z-index:2147483647;">
           <header class="slds-modal__header">
@@ -411,60 +442,77 @@ class SalesforceFieldInspector {
               </ul>
               
               <div id="profiles-tab" class="slds-tabs_default__content slds-show" role="tabpanel">
-                ${this.createPermissionsTable(permissions.profiles)}
+                ${this.createPermissionsTable(permissions.profiles, 'profiles')}
               </div>
               
               <div id="permsets-tab" class="slds-tabs_default__content slds-hide" role="tabpanel">
-                ${this.createPermissionsTable(permissions.permissionSets)}
+                ${this.createPermissionsTable(permissions.permissionSets, 'permissionSets')}
               </div>
             </div>
           </div>
+          <footer class="slds-modal__footer">
+            <button id="field-permissions-save" class="slds-button slds-button_brand">Save</button>
+          </footer>
         </div>
         <div class="slds-backdrop slds-backdrop_open" style="z-index:2147483646;"></div>
       `;
   
       document.body.appendChild(modal);
+      // Trigger fade-in after appending
+      requestAnimationFrame(() => {
+        modal.classList.add('field-permissions-modal-fadein-active');
+      });
       // Add event listener for close button
       const closeBtn = modal.querySelector('#field-permissions-modal-close');
       if (closeBtn) {
         closeBtn.addEventListener('click', () => {
-          modal.remove();
+          this.fadeOutAndRemoveModal();
         });
       }
+      // Add event listener for save button
+      const saveBtn = modal.querySelector('#field-permissions-save');
+      if (saveBtn) {
+        saveBtn.addEventListener('click', () => this.saveModifiedPermissions(fieldInfo));
+      }
       this.setupModalTabs(modal);
+      this.setupPermissionCheckboxListeners();
     }
   
-    createPermissionsTable(permissions) {
+    createPermissionsTable(permissions, type) {
       if (permissions.length === 0) {
         return '<p class="slds-text-color_weak">No permissions found</p>';
       }
-  
+      // Add select/deselect all checkboxes in the header
+      const tableId = `field-permissions-table-${type}`;
       let tableHtml = `
-        <table class="slds-table slds-table_bordered slds-table_cell-buffer">
+        <table id="${tableId}" class="slds-table slds-table_bordered slds-table_cell-buffer field-permissions-table" data-type="${type}">
           <thead>
             <tr class="slds-line-height_reset">
               <th scope="col"><span class="slds-truncate">Name</span></th>
-              <th scope="col"><span class="slds-truncate">Read</span></th>
-              <th scope="col"><span class="slds-truncate">Edit</span></th>
+              <th scope="col">
+                <span class="slds-truncate">Read</span>
+                <input type="checkbox" class="field-permissions-select-all" data-col="read" data-table-id="${tableId}" title="Select/Deselect All Read" style="margin-left:6px;vertical-align:middle;">
+              </th>
+              <th scope="col">
+                <span class="slds-truncate">Edit</span>
+                <input type="checkbox" class="field-permissions-select-all" data-col="edit" data-table-id="${tableId}" title="Select/Deselect All Edit" style="margin-left:6px;vertical-align:middle;">
+              </th>
             </tr>
           </thead>
           <tbody>
       `;
-  
-      permissions.forEach(perm => {
+      permissions.forEach((perm, idx) => {
+        // Use a unique id for each checkbox
+        const rowId = `${type}-${idx}`;
+        // Ensure perm.id is set for PATCH
         tableHtml += `
-          <tr>
+          <tr data-row-id="${rowId}" data-perm-id="${perm.id || perm.permId || ''}">
             <td><span class="slds-truncate">${perm.name}</span></td>
-            <td><span class="slds-icon_container slds-icon-utility-${perm.read ? 'success' : 'error'} slds-current-color">
-              ${perm.read ? '✓' : '✗'}
-            </span></td>
-            <td><span class="slds-icon_container slds-icon-utility-${perm.edit ? 'success' : 'error'} slds-current-color">
-              ${perm.edit ? '✓' : '✗'}
-            </span></td>
+            <td><input type="checkbox" class="field-permissions-read" data-row-id="${rowId}" ${perm.read ? 'checked' : ''}></td>
+            <td><input type="checkbox" class="field-permissions-edit" data-row-id="${rowId}" ${perm.edit ? 'checked' : ''}></td>
           </tr>
         `;
       });
-  
       tableHtml += '</tbody></table>';
       return tableHtml;
     }
@@ -491,18 +539,245 @@ class SalesforceFieldInspector {
       });
     }
   
+    setupPermissionCheckboxListeners() {
+      // Listen for changes on all checkboxes in the modal
+      const modal = document.getElementById('field-permissions-modal');
+      if (!modal) return;
+      const checkboxes = modal.querySelectorAll('.field-permissions-read, .field-permissions-edit');
+      checkboxes.forEach(checkbox => {
+        checkbox.addEventListener('change', (e) => {
+          const rowId = e.target.getAttribute('data-row-id');
+          const row = modal.querySelector(`tr[data-row-id="${rowId}"]`);
+          if (!row) return;
+          // Highlight the cell
+          e.target.style.boxShadow = '0 0 0 2px #ffb75d';
+          e.target.style.background = '#fff7e6';
+          // Track the change
+          if (!this.modifiedPermissions[rowId]) {
+            this.modifiedPermissions[rowId] = {};
+          }
+          if (e.target.classList.contains('field-permissions-read')) {
+            this.modifiedPermissions[rowId].read = e.target.checked;
+          } else if (e.target.classList.contains('field-permissions-edit')) {
+            this.modifiedPermissions[rowId].edit = e.target.checked;
+          }
+          // Store the permission record Id for saving
+          this.modifiedPermissions[rowId].permId = row.getAttribute('data-perm-id');
+        });
+      });
+      // Add select/deselect all listeners
+      const selectAllCheckboxes = modal.querySelectorAll('.field-permissions-select-all');
+      selectAllCheckboxes.forEach(selectAll => {
+        selectAll.addEventListener('change', (e) => {
+          const col = selectAll.getAttribute('data-col');
+          const tableId = selectAll.getAttribute('data-table-id');
+          const table = modal.querySelector(`#${tableId}`);
+          if (!table) return;
+          const colClass = col === 'read' ? '.field-permissions-read' : '.field-permissions-edit';
+          const checkboxes = table.querySelectorAll(colClass);
+          checkboxes.forEach(cb => {
+            if (cb.checked !== selectAll.checked) {
+              cb.checked = selectAll.checked;
+              cb.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+          });
+        });
+      });
+    }
+  
+    fadeOutAndRemoveModal() {
+      const modalEl = document.getElementById('field-permissions-modal');
+      if (modalEl) {
+        modalEl.classList.remove('field-permissions-modal-fadein', 'field-permissions-modal-fadein-active');
+        modalEl.classList.add('field-permissions-modal-fadeout');
+        setTimeout(() => { modalEl.remove(); }, 200);
+      }
+    }
+  
+    async saveModifiedPermissions(fieldInfo) {
+      const modal = document.getElementById('field-permissions-modal');
+      if (!modal) return;
+      const saveBtn = modal.querySelector('#field-permissions-save');
+      if (saveBtn) saveBtn.disabled = true;
+      const updates = Object.entries(this.modifiedPermissions || {});
+      console.log('[FieldPerm PATCH] this.modifiedPermissions:', this.modifiedPermissions);
+      console.log('[FieldPerm PATCH] updates:', updates);
+      if (updates.length === 0) {
+        this.showError('No changes to save');
+        if (saveBtn) saveBtn.disabled = false;
+        return;
+      }
+      try {
+        // Get the Salesforce my.salesforce.com domain from the current Lightning domain
+        const lightningDomain = window.location.hostname;
+        const myDomain = lightningDomain.replace('.lightning.force.com', '.my.salesforce.com');
+        for (const [rowId, change] of updates) {
+          if (!change.permId || typeof change.permId !== 'string') {
+            console.warn('[FieldPerm PATCH/POST] Skipping row with invalid permId:', rowId, change);
+            continue;
+          }
+          // PATCH if real FieldPermissions record, POST if virtual (000...)
+          if (/^01k.{15,17}$/.test(change.permId)) {
+            // PATCH existing FieldPermissions
+            const apiUrl = `https://${myDomain}/services/data/v${this.apiVersion}/sobjects/FieldPermissions/${change.permId}`;
+            const sessionId = await new Promise((resolve, reject) => {
+              chrome.runtime.sendMessage({ action: 'getSessionId', domain: myDomain }, (response) => {
+                if (response && response.sessionId) {
+                  resolve(response.sessionId);
+                } else {
+                  reject(response && response.error ? response.error : 'Failed to get sessionId');
+                }
+              });
+            });
+            let readVal = 'read' in change ? change.read : false;
+            let editVal = 'edit' in change ? change.edit : false;
+            // Enforce: Edit => Read must be true, and Read false => Edit false
+            if (editVal) readVal = true;
+            if (!readVal) editVal = false;
+            const body = { PermissionsRead: readVal, PermissionsEdit: editVal };
+            // Log the PATCH request
+            console.log('[FieldPerm PATCH] Request:', { url: apiUrl, body });
+            await new Promise((resolve, reject) => {
+              const xhr = new XMLHttpRequest();
+              xhr.open('PATCH', apiUrl, true);
+              xhr.setRequestHeader('Authorization', 'Bearer ' + sessionId);
+              xhr.setRequestHeader('Content-Type', 'application/json; charset=UTF-8');
+              xhr.onreadystatechange = function () {
+                if (xhr.readyState === 4) {
+                  // Log the response
+                  console.log('[FieldPerm PATCH] Response:', { status: xhr.status, response: xhr.responseText });
+                  if (xhr.status >= 200 && xhr.status < 300) {
+                    resolve();
+                  } else {
+                    console.error('[FieldPerm PATCH] Error:', xhr.status, xhr.responseText);
+                    reject(new Error('Failed to update permission: ' + xhr.status + ' ' + xhr.responseText));
+                  }
+                }
+              };
+              xhr.send(JSON.stringify(body));
+            });
+          } else if (/^000.{15,17}$/.test(change.permId)) {
+            // POST new FieldPermissions for virtual/permission set
+            // Find the row and get ParentId, Field
+            const row = document.querySelector(`tr[data-row-id="${rowId}"]`);
+            if (!row) {
+              console.warn('[FieldPerm POST] Could not find row for virtual permission:', rowId, change);
+              continue;
+            }
+            // Try to get ParentId and Field from the original record (stored in processPermissions)
+            const permRecord = this.lastFieldPermissionsRecords?.find(r => r.Id === change.permId);
+            if (!permRecord || !permRecord.Parent || !permRecord.Field) {
+              console.warn('[FieldPerm POST] Could not find original record for virtual permission:', rowId, change);
+              continue;
+            }
+            let parentId = permRecord.Parent.Id || permRecord.ParentId;
+            if (!parentId && permRecord.Parent && permRecord.Parent.attributes && permRecord.Parent.attributes.url) {
+              const urlParts = permRecord.Parent.attributes.url.split('/');
+              parentId = urlParts[urlParts.length - 1];
+            }
+            const fieldApi = permRecord.Field;
+            console.log('[FieldPerm POST] parentId:', parentId);
+            console.log('[FieldPerm POST] fieldApi:', fieldApi);
+            if (!parentId || !fieldApi) {
+              console.warn('[FieldPerm POST] Missing ParentId or Field for POST:', permRecord);
+              continue;
+            }
+            const apiUrl = `https://${myDomain}/services/data/v${this.apiVersion}/sobjects/FieldPermissions`;
+            const sessionId = await new Promise((resolve, reject) => {
+              chrome.runtime.sendMessage({ action: 'getSessionId', domain: myDomain }, (response) => {
+                if (response && response.sessionId) {
+                  resolve(response.sessionId);
+                } else {
+                  reject(response && response.error ? response.error : 'Failed to get sessionId');
+                }
+              });
+            });
+            let readVal = 'read' in change ? change.read : false;
+            let editVal = 'edit' in change ? change.edit : false;
+            // Enforce: Edit => Read must be true, and Read false => Edit false
+            if (editVal) readVal = true;
+            if (!readVal) editVal = false;
+            const body = {
+              ParentId: parentId,
+              Field: fieldApi,
+              SObjectType: fieldApi.split('.')[0],
+              PermissionsRead: readVal,
+              PermissionsEdit: editVal
+            };
+            // Log the POST request
+            console.log('[FieldPerm POST] Request:', { url: apiUrl, body });
+            await new Promise((resolve, reject) => {
+              const xhr = new XMLHttpRequest();
+              xhr.open('POST', apiUrl, true);
+              xhr.setRequestHeader('Authorization', 'Bearer ' + sessionId);
+              xhr.setRequestHeader('Content-Type', 'application/json; charset=UTF-8');
+              xhr.onreadystatechange = function () {
+                if (xhr.readyState === 4) {
+                  // Log the response
+                  console.log('[FieldPerm POST] Response:', { status: xhr.status, response: xhr.responseText });
+                  if (xhr.status >= 200 && xhr.status < 300) {
+                    resolve();
+                  } else {
+                    console.error('[FieldPerm POST] Error:', xhr.status, xhr.responseText);
+                    reject(new Error('Failed to create permission: ' + xhr.status + ' ' + xhr.responseText));
+                  }
+                }
+              };
+              xhr.send(JSON.stringify(body));
+            });
+          } else {
+            console.warn('[FieldPerm PATCH/POST] Skipping row with unknown permId format:', rowId, change);
+          }
+        }
+        this.showSuccess('Permissions updated successfully');
+        // Remove highlights after save
+        Object.keys(this.modifiedPermissions).forEach(rowId => {
+          const modal = document.getElementById('field-permissions-modal');
+          if (!modal) return;
+          const row = modal.querySelector(`tr[data-row-id="${rowId}"]`);
+          if (row) {
+            row.querySelectorAll('td').forEach(td => {
+              td.style.boxShadow = '';
+              td.style.background = '';
+            });
+          }
+        });
+        this.modifiedPermissions = {};
+        // Fade out and close the modal after success
+        this.fadeOutAndRemoveModal();
+      } catch (err) {
+        this.showError('Failed to update permissions: ' + err.message);
+      } finally {
+        if (saveBtn) saveBtn.disabled = false;
+      }
+    }
+  
     showError(message) {
+      this.showToast(message, 'error');
+    }
+  
+    showSuccess(message) {
+      this.showToast(message, 'success');
+    }
+  
+    showToast(message, type) {
       const toast = document.createElement('div');
-      toast.className = 'slds-notify slds-notify_toast slds-theme_error';
+      toast.className = `field-permissions-toast field-permissions-toast-${type}`;
       toast.innerHTML = `
-        <span class="slds-assistive-text">Error</span>
-        <div class="slds-notify__content">
-          <h2 class="slds-text-heading_small">${message}</h2>
+        <div class="field-permissions-toast-content">
+          <span class="field-permissions-toast-icon">${type === 'success' ? '✔️' : '⚠️'}</span>
+          <span class="field-permissions-toast-message">${message}</span>
         </div>
       `;
-      
       document.body.appendChild(toast);
-      setTimeout(() => toast.remove(), 5000);
+      // Animate in
+      setTimeout(() => toast.classList.add('field-permissions-toast-in'), 10);
+      // Animate out after 3s
+      setTimeout(() => {
+        toast.classList.remove('field-permissions-toast-in');
+        toast.classList.add('field-permissions-toast-out');
+        setTimeout(() => toast.remove(), 400);
+      }, 3000);
     }
   }
   
