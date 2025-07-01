@@ -1,6 +1,6 @@
 {
     "manifest_version": 3,
-    "name": "Salesforce Field Permissions Inspector 2",
+    "name": "Salesforce Field Permissions Inspector",
     "version": "1.0",
     "description": "Displays field-level security permissions for Salesforce fields",
     "permissions": [
@@ -54,6 +54,6 @@
     ],
     "icons": {
       "16": "icons/shield16.png",
-      "128": "icons/shield128.png"
+      "128": "icons/shield128_green.png"
     }
   }

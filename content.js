@@ -99,16 +99,20 @@ class SalesforceFieldInspector {
     }
   
     addInfoIcon(fieldElement) {
-      console.log('Adding info icon for element:', fieldElement);
-      // Skip if already processed
+      // Skip if already processed on this element or any ancestor up to flexipage-field
       if (fieldElement.querySelector('.field-permissions-icon')) {
         return;
+      }
+      let ancestor = fieldElement.parentElement;
+      while (ancestor && ancestor.tagName !== 'FLEXIPAGE-FIELD') {
+        if (ancestor.querySelector && ancestor.querySelector('.field-permissions-icon')) {
+          return;
+        }
+        ancestor = ancestor.parentElement;
       }
   
       const fieldInfo = this.extractFieldInfo(fieldElement);
       console.log('Field info extracted:', fieldInfo); // Debug logging
-      // Log the field API name for debugging
-      console.log('Extracted fieldName:', fieldInfo.fieldName, 'objectName:', fieldInfo.objectName);
       
       // Exclude standard fields with always-granted permissions
       const excludedFields = [
@@ -151,6 +155,10 @@ class SalesforceFieldInspector {
           const match = dataFieldId.match(/Record(.+)Field$/);
           if (match) {
             fieldName = match[1];
+            // Fix: if fieldName ends with '_c', replace with '__c'
+            if (fieldName.endsWith('_c')) {
+              fieldName = fieldName.replace(/_c$/, '__c');
+            }
             console.log('Extracted fieldName:', fieldName);
           }
         }
@@ -318,6 +326,25 @@ class SalesforceFieldInspector {
           xhr.send();
         });
         const allPermSets = permSetResp.records || [];
+        // Query users for lookup
+        const userQuery = `SELECT Id, Name, Username FROM User WHERE IsActive = true ORDER BY Name LIMIT 50`;
+        const userUrl = `https://${myDomain}/services/data/v${this.apiVersion}/query/?q=${encodeURIComponent(userQuery)}`;
+        const userResp = await new Promise((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open('GET', userUrl, true);
+          xhr.setRequestHeader('Authorization', 'Bearer ' + sessionId);
+          xhr.onreadystatechange = function () {
+            if (xhr.readyState === 4) {
+              if (xhr.status >= 200 && xhr.status < 300) {
+                resolve(JSON.parse(xhr.responseText));
+              } else {
+                reject(new Error('Failed to query Users: ' + xhr.status + ' ' + xhr.responseText));
+              }
+            }
+          };
+          xhr.send();
+        });
+        const allUsers = userResp.records || [];
         // Query field permissions as before
         const permissions = await this.fetchFieldPermissions(fieldInfo);
         // Store the last raw records for use in POST logic
@@ -352,6 +379,7 @@ class SalesforceFieldInspector {
           // Sort after merge
           permissions.permissionSets.sort((a, b) => a.name.localeCompare(b.name));
         }
+        permissions._allUsers = allUsers;
         console.log('[FieldPerm POST] lastFieldPermissionsRecords set:', this.lastFieldPermissionsRecords);
         this.createModal(fieldInfo, permissions);
       } catch (error) {
@@ -462,6 +490,20 @@ class SalesforceFieldInspector {
       // Track modified permissions
       this.modifiedPermissions = {};
   
+      // Try to get the object icon URL and background color from the page
+      let objectIconHtml = '';
+      try {
+        const iconContainer = document.querySelector('.record-avatar-container');
+        const iconImg = iconContainer ? iconContainer.querySelector('img') : null;
+        let bgColor = '';
+        if (iconContainer && iconContainer.style && iconContainer.style.backgroundColor) {
+          bgColor = iconContainer.style.backgroundColor;
+        }
+        if (iconImg && iconImg.src) {
+          objectIconHtml = `<span style="display:inline-block;width:24px;height:24px;vertical-align:middle;margin-right:8px;border-radius:4px;background:${bgColor};box-shadow:0 1px 4px rgba(0,0,0,0.08);overflow:hidden;"><img src="${iconImg.src}" alt="${fieldInfo.objectName}" style="width:24px;height:24px;vertical-align:middle;border-radius:4px;background:${bgColor};"></span>`;
+        }
+      } catch (e) {}
+  
       const modal = document.createElement('div');
       modal.id = 'field-permissions-modal';
       modal.className = 'slds-modal slds-fade-in-open';
@@ -471,14 +513,14 @@ class SalesforceFieldInspector {
       modal.innerHTML = `
         <div class="slds-modal__container" style="z-index:2147483647;">
           <header class="slds-modal__header">
-            <h2 class="slds-text-heading_medium">Field Permissions</h2>
+            <h2 class="slds-text-heading_medium">Field Permissions Inspector</h2>
             <button id="field-permissions-modal-close" class="slds-button slds-button_icon slds-modal__close" style="z-index:2147483647;">
               <span class="slds-button__icon">×</span>
             </button>
           </header>
           <div class="slds-modal__content slds-p-around_medium">
             <div class="field-info">
-              <h3 class="slds-text-heading_small">Field: ${fieldInfo.objectName}.${fieldInfo.fieldName}</h3>
+              <h3 class="slds-text-heading_small" style="display:flex;align-items:center;gap:6px;">${objectIconHtml}<b>${fieldInfo.objectName}</b>: ${fieldInfo.fieldName}</h3>
             </div>
             
             <div class="slds-tabs_default">
@@ -489,6 +531,9 @@ class SalesforceFieldInspector {
                 <li class="slds-tabs_default__item" role="presentation">
                   <a class="slds-tabs_default__link" href="#permsets-tab" role="tab">Permission Sets</a>
                 </li>
+                <li class="slds-tabs_default__item" role="presentation">
+                  <a class="slds-tabs_default__link" href="#useraccess-tab" role="tab">User Access</a>
+                </li>
               </ul>
               
               <div id="profiles-tab" class="slds-tabs_default__content slds-show" role="tabpanel">
@@ -497,6 +542,9 @@ class SalesforceFieldInspector {
               
               <div id="permsets-tab" class="slds-tabs_default__content slds-hide" role="tabpanel">
                 ${this.createPermissionsTable(permissions.permissionSets, 'permissionSets')}
+              </div>
+              <div id="useraccess-tab" class="slds-tabs_default__content slds-hide" role="tabpanel">
+                ${this.createUserAccessTab(fieldInfo, permissions)}
               </div>
             </div>
           </div>
@@ -526,6 +574,7 @@ class SalesforceFieldInspector {
       }
       this.setupModalTabs(modal);
       this.setupPermissionCheckboxListeners();
+      this.setupUserAccessTab(fieldInfo, permissions);
     }
   
     createPermissionsTable(permissions, type) {
@@ -828,6 +877,113 @@ class SalesforceFieldInspector {
         toast.classList.add('field-permissions-toast-out');
         setTimeout(() => toast.remove(), 400);
       }, 3000);
+    }
+
+    createUserAccessTab(fieldInfo, permissions) {
+      const users = permissions._allUsers || [];
+      let userOptions = users.map(u => `<option value="${u.Id}">${u.Name} (${u.Username})</option>`).join('');
+      return `
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:1rem;">
+          <select id="user-access-lookup" class="slds-input" style="flex:1;min-width:0;">
+            <option value="">Select a user...</option>
+            ${userOptions}
+          </select>
+          <button id="user-access-check" class="slds-button slds-button_neutral">Check</button>
+          <span id="user-access-spinner" style="display:none;margin-left:8px;vertical-align:middle;"></span>
+        </div>
+        <div id="user-access-result"></div>
+      `;
+    }
+
+    setupUserAccessTab(fieldInfo, permissions) {
+      const modal = document.getElementById('field-permissions-modal');
+      if (!modal) return;
+      const checkBtn = modal.querySelector('#user-access-check');
+      const userSelect = modal.querySelector('#user-access-lookup');
+      const resultDiv = modal.querySelector('#user-access-result');
+      const spinner = modal.querySelector('#user-access-spinner');
+      if (!checkBtn || !userSelect || !resultDiv || !spinner) return;
+      // Spinner SVG (same as icon spinner)
+      spinner.innerHTML = `<svg width="16" height="16" viewBox="0 0 50 50"><circle cx="25" cy="25" r="20" fill="none" stroke="#0176d3" stroke-width="5" stroke-linecap="round" stroke-dasharray="31.415, 31.415" transform="rotate(72.3246 25 25)"><animateTransform attributeName="transform" type="rotate" from="0 25 25" to="360 25 25" dur="1s" repeatCount="indefinite"/></circle></svg>`;
+      checkBtn.addEventListener('click', async () => {
+        const userId = userSelect.value;
+        if (!userId) {
+          resultDiv.innerHTML = '<span style="color:#c23934;">Please select a user.</span>';
+          return;
+        }
+        // Show spinner
+        spinner.style.display = '';
+        resultDiv.innerHTML = '';
+        // Query user profile and permission sets
+        try {
+          const lightningDomain = window.location.hostname;
+          const myDomain = lightningDomain.replace('.lightning.force.com', '.my.salesforce.com');
+          const sessionId = await new Promise((resolve, reject) => {
+            chrome.runtime.sendMessage({ action: 'getSessionId', domain: myDomain }, (response) => {
+              if (response && response.sessionId) {
+                resolve(response.sessionId);
+              } else {
+                reject(response && response.error ? response.error : 'Failed to get sessionId');
+              }
+            });
+          });
+          // Get user's profile and permission sets
+          const userQuery = `SELECT Id, Name, ProfileId, Profile.Name, (SELECT PermissionSetId, PermissionSet.Name FROM PermissionSetAssignments) FROM User WHERE Id = '${userId}'`;
+          const userUrl = `https://${myDomain}/services/data/v${this.apiVersion}/query/?q=${encodeURIComponent(userQuery)}`;
+          const userResp = await new Promise((resolve, reject) => {
+            const xhr = new XMLHttpRequest();
+            xhr.open('GET', userUrl, true);
+            xhr.setRequestHeader('Authorization', 'Bearer ' + sessionId);
+            xhr.onreadystatechange = function () {
+              if (xhr.readyState === 4) {
+                if (xhr.status >= 200 && xhr.status < 300) {
+                  resolve(JSON.parse(xhr.responseText));
+                } else {
+                  reject(new Error('Failed to query User: ' + xhr.status + ' ' + xhr.responseText));
+                }
+              }
+            };
+            xhr.send();
+          });
+          const user = userResp.records && userResp.records[0];
+          if (!user) {
+            resultDiv.innerHTML = '<span style="color:#c23934;">User not found.</span>';
+            spinner.style.display = 'none';
+            return;
+          }
+          // Check profile
+          let hasProfileAccess = false;
+          let profileName = user.Profile && user.Profile.Name;
+          let profilePerm = (permissions.profiles || []).find(p => p.name === profileName);
+          if (profilePerm && (profilePerm.read || profilePerm.edit)) {
+            hasProfileAccess = true;
+          }
+          // Check permission sets
+          let permSetAccess = [];
+          let psaArr = [];
+          if (user.PermissionSetAssignments) {
+            psaArr = Array.isArray(user.PermissionSetAssignments) ? user.PermissionSetAssignments : (user.PermissionSetAssignments.records || []);
+          }
+          let userPermSetIds = psaArr.map(psa => psa.PermissionSetId);
+          (permissions.permissionSets || []).forEach(ps => {
+            if (userPermSetIds.includes(ps.parentId) && (ps.read || ps.edit)) {
+              permSetAccess.push(ps.name);
+            }
+          });
+          // Compose result
+          if (hasProfileAccess || permSetAccess.length > 0) {
+            resultDiv.innerHTML = `<span style="color:#2ecc40;font-weight:bold;">User has access to <b>${fieldInfo.objectName}.${fieldInfo.fieldName}</b></span><br>` +
+              (hasProfileAccess ? `<div>Profile: <b>${profileName}</b></div>` : '') +
+              (permSetAccess.length > 0 ? `<div>Permission Sets: <b>${permSetAccess.join(', ')}</b></div>` : '');
+          } else {
+            resultDiv.innerHTML = `<span style="color:#c23934;font-weight:bold;">User does NOT have access to <b>${fieldInfo.objectName}.${fieldInfo.fieldName}</b></span>`;
+          }
+        } catch (err) {
+          resultDiv.innerHTML = `<span style="color:#c23934;">Error: ${err.message}</span>`;
+        } finally {
+          spinner.style.display = 'none';
+        }
+      });
     }
   }
   
