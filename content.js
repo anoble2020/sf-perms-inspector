@@ -85,34 +85,35 @@ class SalesforceFieldInspector {
       const fieldSelectors = [
         'flexipage-field[data-field-id]',
         '.slds-form-element__label',
-        'lightning-input',
-        'lightning-textarea',
-        'lightning-combobox',
-        'lightning-dual-listbox',
-        'div[data-target-selection-name]'
+        'records-record-layout-item',
+        'div[data-target-selection-name]',
+        //'lightning-input',
+        //'lightning-textarea',
+        //'lightning-combobox',
+        //'lightning-dual-listbox',
       ];
   
       fieldSelectors.forEach(selector => {
         const elements = container.querySelectorAll(selector);
-        elements.forEach(element => this.addInfoIcon(element));
+        elements.forEach(element => this.makeFieldClickable(element));
       });
     }
   
-    addInfoIcon(fieldElement) {
+    makeFieldClickable(fieldElement) {
       // Skip if already processed on this element or any ancestor up to flexipage-field
-      if (fieldElement.querySelector('.field-permissions-icon')) {
+      if (fieldElement.querySelector('.field-permissions-clickable')) {
         return;
       }
       let ancestor = fieldElement.parentElement;
-      while (ancestor && ancestor.tagName !== 'FLEXIPAGE-FIELD') {
-        if (ancestor.querySelector && ancestor.querySelector('.field-permissions-icon')) {
+      while (ancestor && ancestor.tagName !== 'FLEXIPAGE-FIELD' && ancestor.tagName !== 'RECORDS-RECORD-LAYOUT-ITEM') {
+        if (ancestor.querySelector && ancestor.querySelector('.field-permissions-clickable')) {
           return;
         }
         ancestor = ancestor.parentElement;
       }
   
       const fieldInfo = this.extractFieldInfo(fieldElement);
-      console.log('Field info extracted:', fieldInfo); // Debug logging
+      //console.log('Field info extracted:', fieldInfo); // Debug logging
       
       // Exclude standard fields with always-granted permissions
       const excludedFields = [
@@ -122,26 +123,25 @@ class SalesforceFieldInspector {
         return;
       }
   
-      const icon = this.createInfoIcon(fieldInfo);
-      this.insertIcon(fieldElement, icon);
-      console.log('Icon added for:', fieldInfo.fieldName); // Debug logging
+      this.makeLabelClickable(fieldElement, fieldInfo);
+      //console.log('Field made clickable for:', fieldInfo.fieldName); // Debug logging
     }
   
     extractFieldInfo(element) {
-        console.log('Extracting field info for element:', element);
+        //console.log('Extracting field info for element:', element);
       let fieldName = '';
       let objectName = '';
   
       // New: Handle data-target-selection-name attribute
       if (element.hasAttribute && element.hasAttribute('data-target-selection-name')) {
         const target = element.getAttribute('data-target-selection-name');
-        console.log('Data-target-selection-name value:', target);
+        //console.log('Data-target-selection-name value:', target);
         // Example: sfdc:RecordField.WorkPlan.Name
         const match = target.match(/sfdc:RecordField\.(\w+)\.(\w+)/);
         if (match) {
           objectName = match[1];
           fieldName = match[2];
-          console.log('Extracted from data-target-selection-name:', { objectName, fieldName });
+          //console.log('Extracted from data-target-selection-name:', { objectName, fieldName });
           return { fieldName, objectName };
         }
       }
@@ -149,7 +149,7 @@ class SalesforceFieldInspector {
       // Handle flexipage-field elements
       if (element.tagName === 'FLEXIPAGE-FIELD') {
         const dataFieldId = element.getAttribute('data-field-id');
-        console.log('Data-field-id value:', dataFieldId);
+        //console.log('Data-field-id value:', dataFieldId);
         if (dataFieldId) {
           // Extract field name from data-field-id (e.g., "RecordWorkOrderNumberField" -> "WorkOrderNumber")
           const match = dataFieldId.match(/Record(.+)Field$/);
@@ -159,7 +159,19 @@ class SalesforceFieldInspector {
             if (fieldName.endsWith('_c')) {
               fieldName = fieldName.replace(/_c$/, '__c');
             }
-            console.log('Extracted fieldName:', fieldName);
+            //console.log('Extracted fieldName:', fieldName);
+          }
+        }
+      } else if (element.tagName === 'RECORDS-RECORD-LAYOUT-ITEM') {
+        const div = element.querySelector('div[data-target-selection-name]');
+        if (div) {
+          const target = div.getAttribute('data-target-selection-name');
+          const match = target.match(/sfdc:RecordField\.(\w+)\.(\w+)/);
+          if (match) {
+            objectName = match[1];
+            fieldName = match[2];
+            console.log('Extracted from records-record-layout-item:', { objectName, fieldName });
+            return { fieldName, objectName };
           }
         }
       } else {
@@ -216,83 +228,58 @@ class SalesforceFieldInspector {
       return { fieldName, objectName };
     }
   
-    createInfoIcon(fieldInfo) {
-      const icon = document.createElement('span');
-      icon.className = 'field-permissions-icon';
-      // Use shield.png as the icon
-      const img = document.createElement('img');
-      img.src = chrome.runtime.getURL('icons/shield128.png');
-      img.alt = 'Field Permissions';
-      img.style.width = '16px';
-      img.style.height = '16px';
-      img.style.verticalAlign = 'middle';
-      img.style.marginLeft = '4px';
-      icon.appendChild(img);
-      icon.style.cursor = 'pointer';
-      icon.title = 'View field permissions';
-
-      // Spinner element
-      const spinner = document.createElement('span');
-      spinner.className = 'field-permissions-spinner';
-      spinner.style.display = 'none';
-      spinner.style.width = '16px';
-      spinner.style.height = '16px';
-      spinner.style.marginLeft = '4px';
-      spinner.style.verticalAlign = 'middle';
-      spinner.innerHTML = `<svg width="16" height="16" viewBox="0 0 50 50"><circle cx="25" cy="25" r="20" fill="none" stroke="#0176d3" stroke-width="5" stroke-linecap="round" stroke-dasharray="31.415, 31.415" transform="rotate(72.3246 25 25)"><animateTransform attributeName="transform" type="rotate" from="0 25 25" to="360 25 25" dur="1s" repeatCount="indefinite"/></circle></svg>`;
-      icon.appendChild(spinner);
-
-      icon.addEventListener('click', async (e) => {
+    makeLabelClickable(fieldElement, fieldInfo) {
+      // Find the label element to make clickable
+      let labelElement = null;
+      
+      // Handle flexipage-field elements
+      if (fieldElement.tagName === 'FLEXIPAGE-FIELD') {
+        labelElement = fieldElement.querySelector('.test-id__field-label');
+      } else {
+        // Special handling for checkboxes
+        const checkboxInput = fieldElement.querySelector('input[type="checkbox"]');
+        if (checkboxInput) {
+          labelElement = checkboxInput.closest('label.slds-checkbox__label') || fieldElement.querySelector('.slds-form-element__label');
+        } else {
+          // Find the best place to make clickable for other elements
+          labelElement = fieldElement.querySelector('label') || 
+                        fieldElement.querySelector('.test-id__field-label') ||
+                        fieldElement.closest('.slds-form-element')?.querySelector('label') ||
+                        fieldElement.closest('.slds-form-element')?.querySelector('.test-id__field-label');
+        }
+      }
+      
+      if (!labelElement) {
+        // If no label found, make the field element itself clickable
+        labelElement = fieldElement;
+      }
+      
+      // Skip if already processed
+      if (labelElement.classList.contains('field-permissions-clickable')) {
+        return;
+      }
+      
+      // Add clickable class and event listener
+      labelElement.classList.add('field-permissions-clickable');
+      labelElement.title = 'Click to view field permissions';
+      
+      labelElement.addEventListener('click', async (e) => {
         e.stopPropagation();
-        // Show spinner, hide icon
-        img.style.display = 'none';
-        spinner.style.display = '';
+        e.preventDefault();
+        
+        // Add loading state
+        labelElement.classList.add('loading');
+        
         try {
           await this.showPermissionsModal(fieldInfo);
         } finally {
-          // Hide spinner, show icon
-          spinner.style.display = 'none';
-          img.style.display = '';
+          // Remove loading state
+          labelElement.classList.remove('loading');
         }
       });
-
-      return icon;
     }
   
-    insertIcon(fieldElement, icon) {
-      // Handle flexipage-field elements
-      if (fieldElement.tagName === 'FLEXIPAGE-FIELD') {
-        const labelElement = fieldElement.querySelector('.test-id__field-label');
-        if (labelElement) {
-          labelElement.appendChild(icon);
-          return;
-        }
-      }
 
-      // Special handling for checkboxes
-      const checkboxInput = fieldElement.querySelector('input[type="checkbox"]');
-      if (checkboxInput) {
-        // Try to find the visible label span for the checkbox
-        // Look for the closest .slds-checkbox__label or .slds-form-element__label
-        let labelSpan = checkboxInput.closest('label.slds-checkbox__label') || fieldElement.querySelector('.slds-form-element__label');
-        if (labelSpan) {
-          labelSpan.appendChild(icon);
-          return;
-        }
-      }
-
-      // Find the best place to insert the icon for other elements
-      const label = fieldElement.querySelector('label') || 
-                   fieldElement.querySelector('.test-id__field-label') ||
-                   fieldElement.closest('.slds-form-element')?.querySelector('label') ||
-                   fieldElement.closest('.slds-form-element')?.querySelector('.test-id__field-label');
-      
-      if (label) {
-        label.appendChild(icon);
-      } else {
-        fieldElement.appendChild(icon);
-      }
-    }
   
     async showPermissionsModal(fieldInfo) {
       try {
@@ -326,6 +313,25 @@ class SalesforceFieldInspector {
           xhr.send();
         });
         const allPermSets = permSetResp.records || [];
+        // Query all profiles
+        const profileQuery = `SELECT Id, Name FROM Profile`;
+        const profileUrl = `https://${myDomain}/services/data/v${this.apiVersion}/query/?q=${encodeURIComponent(profileQuery)}`;
+        const profileResp = await new Promise((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open('GET', profileUrl, true);
+          xhr.setRequestHeader('Authorization', 'Bearer ' + sessionId);
+          xhr.onreadystatechange = function () {
+            if (xhr.readyState === 4) {
+              if (xhr.status >= 200 && xhr.status < 300) {
+                resolve(JSON.parse(xhr.responseText));
+              } else {
+                reject(new Error('Failed to query Profiles: ' + xhr.status + ' ' + xhr.responseText));
+              }
+            }
+          };
+          xhr.send();
+        });
+        const allProfiles = profileResp.records || [];
         // Query users for lookup
         const userQuery = `SELECT Id, Name, Username FROM User WHERE IsActive = true ORDER BY Name LIMIT 50`;
         const userUrl = `https://${myDomain}/services/data/v${this.apiVersion}/query/?q=${encodeURIComponent(userQuery)}`;
@@ -372,12 +378,37 @@ class SalesforceFieldInspector {
                 read: false,
                 edit: false,
                 id: null,
-                parentId: ps.Id
+                parentId: ps.Id,
+                type: 'permset'
               });
             }
           });
           // Sort after merge
           permissions.permissionSets.sort((a, b) => a.name.localeCompare(b.name));
+        }
+        // Merge all profiles with field permissions
+        if (permissions && permissions.profiles) {
+          // Build a map of profile Ids already present in permissions.profiles
+          const profileIdSet = new Set();
+          console.log('profiles', permissions.profiles);
+          permissions.profiles.forEach(p => {
+            if (p && p.parentId && p) profileIdSet.add(p.parentId);
+          });
+          // Add missing profiles as unchecked, only if not already present by Id
+          allProfiles.forEach(p => {
+            if (!profileIdSet.has(p.Id)) {
+              permissions.profiles.push({
+                name: p.Name,
+                read: false,
+                edit: false,
+                id: null,
+                parentId: p.Id,
+                type: 'profile'
+              });
+            }
+          });
+          // Sort after merge
+          permissions.profiles.sort((a, b) => a.name.localeCompare(b.name));
         }
         permissions._allUsers = allUsers;
         console.log('[FieldPerm POST] lastFieldPermissionsRecords set:', this.lastFieldPermissionsRecords);
@@ -443,7 +474,7 @@ class SalesforceFieldInspector {
       const seenPermSets = new Set();
 
       records.forEach(record => {
-        console.log('FieldPermissions record:', record);
+        //console.log('FieldPermissions record:', record);
         let item = {
           name: '',
           read: record.PermissionsRead,
@@ -492,8 +523,14 @@ class SalesforceFieldInspector {
   
       // Try to get the object icon URL and background color from the page
       let objectIconHtml = '';
+      let iconContainer;
       try {
-        const iconContainer = document.querySelector('.record-avatar-container');
+        iconContainer = document.querySelector('.record-avatar-container');
+
+        if(!iconContainer) {
+          iconContainer = document.querySelector('.highlights-icon-container');
+        }
+        console.log('iconContainer', iconContainer);
         const iconImg = iconContainer ? iconContainer.querySelector('img') : null;
         let bgColor = '';
         if (iconContainer && iconContainer.style && iconContainer.style.backgroundColor) {
@@ -513,7 +550,7 @@ class SalesforceFieldInspector {
       modal.innerHTML = `
         <div class="slds-modal__container" style="z-index:2147483647;">
           <header class="slds-modal__header">
-            <h2 class="slds-text-heading_medium">Field Permissions Inspector</h2>
+            <h2 class="slds-text-heading_medium">Field Inspector</h2>
             <button id="field-permissions-modal-close" class="slds-button slds-button_icon slds-modal__close" style="z-index:2147483647;">
               <span class="slds-button__icon">×</span>
             </button>
@@ -601,6 +638,9 @@ class SalesforceFieldInspector {
           <tbody>
       `;
       permissions.forEach((perm, idx) => {
+        if(perm.type === 'profile' && !perm.id) {
+          return;
+        }
         // Use a unique id for each checkbox
         const rowId = `${type}-${idx}`;
         // Ensure perm.id is set for PATCH
@@ -884,7 +924,7 @@ class SalesforceFieldInspector {
       let userOptions = users.map(u => `<option value="${u.Id}">${u.Name} (${u.Username})</option>`).join('');
       return `
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:1rem;">
-          <select id="user-access-lookup" class="slds-input" style="flex:1;min-width:0;">
+          <select id="user-access-lookup" class="slds-input" style="flex:1;min-width:0;max-width:50%; padding: 0.5rem;">
             <option value="">Select a user...</option>
             ${userOptions}
           </select>

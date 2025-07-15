@@ -1,8 +1,8 @@
 {
     "manifest_version": 3,
-    "name": "Salesforce Field Permissions Inspector",
+    "name": "Salesforce Field Inspector",
     "version": "1.0",
-    "description": "Displays field-level security permissions for Salesforce fields",
+    "description": "Manages metadata and permissions for Salesforce fields from within the Lightning UI",
     "permissions": [
       "activeTab",
       "storage",
@@ -22,13 +22,15 @@
     "https://*.visualforce.mil/*",
     "https://*.crmforce.mil/*",
     "https://*.force.com.mcas.ms/*",
-    "https://*.builder.salesforce-experience.com/*"
+    "https://*.builder.salesforce-experience.com/*",
+    "https://*.my.salesforce.com/*"
   ],
   "content_scripts": [
     {
       "matches": [
         "https://*.salesforce.com/*",
-        "https://*.lightning.force.com/*"
+        "https://*.lightning.force.com/*",
+        "https://*.my.salesforce.com/*"
       ],
       "all_frames": true,
       "css": [
